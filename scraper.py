@@ -45,9 +45,11 @@ CRYPTOS = {
     }
 }
 
-# Data directory
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+# Data directory - use Railway volume mount if available, otherwise local
+# Set DATA_DIR env var in Railway to your volume mount path (e.g., /data)
+DATA_DIR = os.environ.get('DATA_DIR', '/data')
 os.makedirs(DATA_DIR, exist_ok=True)
+print(f"Data directory: {DATA_DIR}")
 
 # In-memory buffers for live display (last 100 ticks per crypto)
 live_data = {crypto: deque(maxlen=100) for crypto in CRYPTOS}
@@ -183,8 +185,19 @@ def get_csv_path(crypto, data_type):
     return os.path.join(DATA_DIR, f"{crypto.lower()}_{data_type}.csv")
 
 
+def count_csv_rows(filepath):
+    """Count rows in a CSV file (excluding header)"""
+    if not os.path.exists(filepath):
+        return 0
+    try:
+        with open(filepath, 'r') as f:
+            return max(0, sum(1 for _ in f) - 1)  # -1 for header
+    except:
+        return 0
+
+
 def init_csv_files():
-    """Initialize CSV files with headers if they don't exist"""
+    """Initialize CSV files with headers if they don't exist, and load existing counts"""
     price_log_headers = [
         'timestamp', 'ticker', 'strike_price', 'crypto_price', 'mins_left',
         'yes_ask', 'no_ask', 'yes_bid', 'no_bid',
@@ -212,6 +225,17 @@ def init_csv_files():
             with open(results_path, 'w', newline='') as f:
                 writer = csv.writer(f)
                 writer.writerow(window_results_headers)
+
+        # Load existing counts into stats
+        existing_ticks = count_csv_rows(price_path)
+        existing_windows = count_csv_rows(results_path)
+
+        with data_lock:
+            stats['total_ticks'][crypto] = existing_ticks
+            stats['windows_completed'][crypto] = existing_windows
+
+        if existing_ticks > 0 or existing_windows > 0:
+            print(f"[{crypto}] Loaded existing data: {existing_ticks:,} ticks, {existing_windows} windows")
 
 
 def log_tick(crypto, ticker, strike, crypto_price, secs_left, market, orderbook):

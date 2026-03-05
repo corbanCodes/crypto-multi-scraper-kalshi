@@ -202,6 +202,10 @@ MAIN_TEMPLATE = """
                 <a href="/download/{{ crypto }}/price_log" class="btn btn-primary">Download Price Log</a>
                 <a href="/download/{{ crypto }}/window_results" class="btn btn-secondary">Download Results</a>
             </div>
+            <div class="downloads" style="margin-top: 8px;">
+                <a href="/live/{{ crypto }}/price_log" class="btn btn-secondary">View Live Price Log</a>
+                <a href="/live/{{ crypto }}/window_results" class="btn btn-secondary">View Live Results</a>
+            </div>
 
             <div class="stats-row">
                 <span>Ticks: <span id="ticks-{{ crypto }}">0</span></span>
@@ -484,6 +488,240 @@ CRYPTO_TEMPLATE = """
 """
 
 
+LIVE_CSV_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ crypto }} {{ data_type }} - Live View</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a0a;
+            color: #e0e0e0;
+            padding: 20px;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            position: sticky;
+            top: 0;
+            background: #0a0a0a;
+            padding: 10px 0;
+            z-index: 100;
+        }
+        h1 { color: #fff; font-size: 20px; }
+        .controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .nav a, .controls a {
+            color: #3b82f6;
+            text-decoration: none;
+        }
+        .nav a:hover { text-decoration: underline; }
+        .btn {
+            padding: 8px 16px;
+            background: #3b82f6;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-size: 13px;
+            border: none;
+            cursor: pointer;
+        }
+        .btn:hover { background: #2563eb; }
+        .btn-secondary { background: #333; }
+        .stats-bar {
+            background: #1a1a1a;
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            color: #888;
+        }
+        .stats-bar span { color: #4ade80; }
+        .table-container {
+            background: #111;
+            border-radius: 8px;
+            overflow: hidden;
+            max-height: calc(100vh - 180px);
+            overflow-y: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 11px;
+            font-family: 'Monaco', 'Menlo', monospace;
+        }
+        thead {
+            position: sticky;
+            top: 0;
+            background: #222;
+            z-index: 10;
+        }
+        th {
+            padding: 10px 8px;
+            text-align: left;
+            color: #888;
+            font-weight: 500;
+            border-bottom: 2px solid #333;
+            white-space: nowrap;
+        }
+        td {
+            padding: 6px 8px;
+            border-bottom: 1px solid #1a1a1a;
+            white-space: nowrap;
+        }
+        tr:hover { background: #1a1a1a; }
+        tr.new-row { animation: highlight 2s ease-out; }
+        @keyframes highlight {
+            from { background: #2a4a2a; }
+            to { background: transparent; }
+        }
+        .yes { color: #4ade80; }
+        .no { color: #f87171; }
+        .price { color: #fbbf24; }
+        .time { color: #888; }
+        .auto-scroll-label {
+            font-size: 12px;
+            color: #888;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+        }
+        .row-count { color: #4ade80; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>{{ crypto }} - {{ data_type_display }}</h1>
+        <div class="controls">
+            <label class="auto-scroll-label">
+                <input type="checkbox" id="auto-scroll" checked> Auto-scroll
+            </label>
+            <a href="/download/{{ crypto }}/{{ data_type }}" class="btn btn-secondary">Download CSV</a>
+            <a href="/" class="btn btn-secondary">Dashboard</a>
+        </div>
+    </div>
+
+    <div class="stats-bar">
+        <div>Total rows: <span id="row-count" class="row-count">0</span></div>
+        <div>Last update: <span id="last-update">--</span></div>
+        <div>Updates every 500ms</div>
+    </div>
+
+    <div class="table-container" id="table-container">
+        <table>
+            <thead>
+                <tr id="header-row"></tr>
+            </thead>
+            <tbody id="table-body">
+                <tr><td>Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const crypto = '{{ crypto }}';
+        const dataType = '{{ data_type }}';
+        let lastRowCount = 0;
+        let headers = [];
+
+        function formatCell(value, header) {
+            if (value === null || value === undefined) return '--';
+
+            // Format based on header name
+            if (header.includes('price') || header === 'strike_price') {
+                const num = parseFloat(value);
+                if (isNaN(num)) return value;
+                if (num < 10) return '$' + num.toFixed(4);
+                return '$' + num.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            }
+            if (header.includes('yes')) {
+                return '<span class="yes">' + value + '</span>';
+            }
+            if (header.includes('no')) {
+                return '<span class="no">' + value + '</span>';
+            }
+            if (header === 'result') {
+                const cls = value === 'yes' ? 'yes' : 'no';
+                return '<span class="' + cls + '">' + value.toUpperCase() + '</span>';
+            }
+            if (header === 'timestamp') {
+                // Show just time part for readability
+                if (value.includes('T')) {
+                    return '<span class="time">' + value.split('T')[1].split('.')[0] + '</span>';
+                }
+            }
+            return value;
+        }
+
+        function updateTable() {
+            fetch('/api/csv/' + crypto + '/' + dataType + '?limit=500')
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.rows || data.rows.length === 0) {
+                        document.getElementById('table-body').innerHTML = '<tr><td>No data yet...</td></tr>';
+                        return;
+                    }
+
+                    // Update headers if needed
+                    if (headers.length === 0 || headers.join(',') !== data.headers.join(',')) {
+                        headers = data.headers;
+                        const headerRow = document.getElementById('header-row');
+                        headerRow.innerHTML = headers.map(h => '<th>' + h + '</th>').join('');
+                    }
+
+                    // Update row count
+                    document.getElementById('row-count').textContent = data.total_rows.toLocaleString();
+                    document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+
+                    // Build table body
+                    const tbody = document.getElementById('table-body');
+                    const isNewData = data.rows.length > lastRowCount;
+
+                    let html = '';
+                    data.rows.forEach((row, idx) => {
+                        const isNew = isNewData && idx >= data.rows.length - (data.rows.length - lastRowCount);
+                        html += '<tr' + (isNew ? ' class="new-row"' : '') + '>';
+                        row.forEach((cell, i) => {
+                            html += '<td>' + formatCell(cell, headers[i]) + '</td>';
+                        });
+                        html += '</tr>';
+                    });
+                    tbody.innerHTML = html;
+
+                    // Auto-scroll to bottom if enabled
+                    const container = document.getElementById('table-container');
+                    const autoScroll = document.getElementById('auto-scroll').checked;
+                    if (autoScroll && isNewData) {
+                        container.scrollTop = container.scrollHeight;
+                    }
+
+                    lastRowCount = data.rows.length;
+                });
+        }
+
+        // Initial load and refresh
+        updateTable();
+        setInterval(updateTable, 500);
+    </script>
+</body>
+</html>
+"""
+
+
 @app.route('/')
 def index():
     return render_template_string(MAIN_TEMPLATE, cryptos=CRYPTOS)
@@ -538,6 +776,62 @@ def download_csv(crypto, data_type):
     )
 
 
+@app.route('/live/<crypto>/<data_type>')
+def live_csv_view(crypto, data_type):
+    """Live CSV viewer page"""
+    crypto = crypto.upper()
+    if crypto not in CRYPTOS:
+        return "Unknown crypto", 404
+    if data_type not in ['price_log', 'window_results']:
+        return "Unknown data type", 404
+
+    data_type_display = "Price Log" if data_type == "price_log" else "Window Results"
+    return render_template_string(
+        LIVE_CSV_TEMPLATE,
+        crypto=crypto,
+        data_type=data_type,
+        data_type_display=data_type_display
+    )
+
+
+@app.route('/api/csv/<crypto>/<data_type>')
+def api_csv_data(crypto, data_type):
+    """Get CSV data as JSON for live viewer"""
+    import csv as csv_module
+
+    crypto = crypto.upper()
+    if crypto not in CRYPTOS:
+        return jsonify({'error': 'Unknown crypto'}), 404
+    if data_type not in ['price_log', 'window_results']:
+        return jsonify({'error': 'Unknown data type'}), 404
+
+    csv_path = get_csv_path(crypto, data_type)
+    if not os.path.exists(csv_path):
+        return jsonify({'headers': [], 'rows': [], 'total_rows': 0})
+
+    try:
+        # Read CSV and return last N rows
+        from flask import request
+        limit = int(request.args.get('limit', 200))
+
+        with open(csv_path, 'r') as f:
+            reader = csv_module.reader(f)
+            headers = next(reader, [])
+            rows = list(reader)
+
+        total_rows = len(rows)
+        # Return last 'limit' rows
+        rows = rows[-limit:] if len(rows) > limit else rows
+
+        return jsonify({
+            'headers': headers,
+            'rows': rows,
+            'total_rows': total_rows
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 def run_server():
     """Start the web server"""
     port = int(os.environ.get('PORT', 8080))
@@ -545,16 +839,29 @@ def run_server():
     app.run(host='0.0.0.0', port=port, threaded=True)
 
 
-# Start scrapers when module loads (for gunicorn --preload)
-print("=" * 70)
-print("MULTI-CRYPTO 15-MINUTE KALSHI SCRAPER + WEB SERVER")
-print("=" * 70)
-print(f"Tracking: {', '.join(CRYPTOS.keys())}")
-print(f"Data directory: {DATA_DIR}")
-print("=" * 70)
-print("Starting scraper threads...")
-start_scrapers()
-print("Scrapers running!")
+# Track if scrapers have been started
+_scrapers_started = False
+
+def ensure_scrapers_running():
+    """Start scrapers if not already running (called on first request)"""
+    global _scrapers_started
+    if not _scrapers_started:
+        print("=" * 70)
+        print("MULTI-CRYPTO 15-MINUTE KALSHI SCRAPER + WEB SERVER")
+        print("=" * 70)
+        print(f"Tracking: {', '.join(CRYPTOS.keys())}")
+        print(f"Data directory: {DATA_DIR}")
+        print("=" * 70)
+        print("Starting scraper threads...")
+        start_scrapers()
+        print("Scrapers running!")
+        _scrapers_started = True
+
+
+@app.before_request
+def before_request():
+    """Ensure scrapers are running before handling any request"""
+    ensure_scrapers_running()
 
 
 if __name__ == "__main__":
