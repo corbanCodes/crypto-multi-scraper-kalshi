@@ -92,7 +92,7 @@ def api_get(endpoint, params=None):
 
 
 def get_active_market(series_ticker):
-    """Get the currently active market for a series"""
+    """Get the currently active market for a series - picks the one expiring soonest"""
     data = api_get("events", {"series_ticker": series_ticker, "status": "open"})
     if not data or not data.get('events'):
         return None
@@ -100,7 +100,25 @@ def get_active_market(series_ticker):
     markets = api_get("markets", {"event_ticker": event['event_ticker']})
     if not markets or not markets.get('markets'):
         return None
-    return markets['markets'][0]
+
+    # Filter to only open markets and pick the one expiring soonest
+    open_markets = [m for m in markets['markets'] if m.get('status') == 'open']
+    if not open_markets:
+        return None
+
+    # Sort by close_time to get the one expiring soonest
+    def get_close_time(m):
+        close_str = m.get('close_time', '')
+        if not close_str:
+            return float('inf')
+        try:
+            close = datetime.fromisoformat(close_str.replace('Z', '+00:00'))
+            return close.timestamp()
+        except:
+            return float('inf')
+
+    open_markets.sort(key=get_close_time)
+    return open_markets[0]
 
 
 def get_market_details(ticker):

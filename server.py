@@ -167,7 +167,7 @@ MAIN_TEMPLATE = """
     <h1>Multi-Crypto 15-Min Kalshi Scraper</h1>
     <div class="stats" id="global-stats">
         Runtime: <span id="runtime">--</span> |
-        Refreshing every 2s
+        Live updates
     </div>
 
     <div class="grid" id="crypto-grid">
@@ -283,9 +283,9 @@ MAIN_TEMPLATE = """
             }
         }
 
-        // Initial load and refresh every 2 seconds
+        // Initial load and refresh every 500ms for near real-time updates
         updateData();
-        setInterval(updateData, 2000);
+        setInterval(updateData, 500);
     </script>
 </body>
 </html>
@@ -477,7 +477,7 @@ CRYPTO_TEMPLATE = """
         }
 
         updateData();
-        setInterval(updateData, 2000);
+        setInterval(updateData, 500);
     </script>
 </body>
 </html>
