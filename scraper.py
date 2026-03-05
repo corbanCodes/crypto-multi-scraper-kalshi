@@ -317,11 +317,22 @@ def scrape_crypto(crypto, config):
     last_ticker = None
     settled_tickers = set()
 
+    # Pre-populate settled_tickers with already-settled markets (don't count historical)
+    try:
+        historical = get_settled_markets(series_ticker)
+        for m in historical:
+            t = m.get('ticker')
+            if t:
+                settled_tickers.add(t)
+        log(f"[{crypto}] Ignoring {len(settled_tickers)} historical settlements")
+    except Exception as e:
+        log(f"[{crypto}] Failed to get historical: {e}")
+
     while True:
         try:
             loop_start = time.time()
 
-            # Check for settlements
+            # Check for NEW settlements only
             settled = get_settled_markets(series_ticker)
             for market in settled:
                 ticker = market.get('ticker')
@@ -341,27 +352,34 @@ def scrape_crypto(crypto, config):
             # Get current market
             market = get_active_market(series_ticker)
             if not market:
+                log(f"[{crypto}] No active market found, waiting...")
+                time.sleep(2)
+                continue
+
+            ticker = market.get('ticker')
+            if not ticker:
                 time.sleep(1)
                 continue
 
-            details = get_market_details(market['ticker'])
+            # Get full details
+            details = get_market_details(ticker)
             if not details:
-                time.sleep(0.5)
+                log(f"[{crypto}] Failed to get details for {ticker}")
+                time.sleep(1)
                 continue
 
-            ticker = details['ticker']
             secs_left = secs_until_close(details.get('close_time'))
 
             if secs_left is None or secs_left < -60:
                 time.sleep(1)
                 continue
 
-            # New window
+            # New window detected
             if ticker != last_ticker:
                 strike = details.get('floor_strike', 0)
                 price = get_crypto_price(kraken_pair)
 
-                log(f"[{crypto}] NEW WINDOW: {ticker} | Strike: ${strike:,.2f}")
+                log(f"[{crypto}] NEW WINDOW: {ticker} | Strike: ${strike:,.2f} | {secs_left/60:.1f}m left")
                 last_ticker = ticker
 
                 with data_lock:
@@ -379,6 +397,11 @@ def scrape_crypto(crypto, config):
 
                 log_tick(crypto, ticker, strike, price, secs_left, details, orderbook)
 
+                # Log every 30 ticks
+                tick_count = stats['total_ticks'].get(crypto, 0)
+                if tick_count % 30 == 0:
+                    log(f"[{crypto}] Tick #{tick_count} | {secs_left/60:.1f}m | Price: ${price:,.2f if price else 0}")
+
             # Calculate sleep to maintain ~1 second intervals
             elapsed = time.time() - loop_start
             sleep_time = max(0.1, 1.0 - elapsed)
@@ -386,6 +409,8 @@ def scrape_crypto(crypto, config):
 
         except Exception as e:
             log(f"[{crypto}] ERROR: {e}")
+            import traceback
+            traceback.print_exc()
             time.sleep(5)
 
 
