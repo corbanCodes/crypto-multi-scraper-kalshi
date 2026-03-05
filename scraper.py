@@ -49,7 +49,74 @@ CRYPTOS = {
 # Set DATA_DIR env var in Railway to your volume mount path (e.g., /data)
 DATA_DIR = os.environ.get('DATA_DIR', '/data')
 os.makedirs(DATA_DIR, exist_ok=True)
-print(f"Data directory: {DATA_DIR}")
+
+
+def verify_volume_storage():
+    """Verify volume storage is working and log detailed status"""
+    print("=" * 70)
+    print("VOLUME STORAGE CHECK")
+    print("=" * 70)
+
+    # 1. Check directory exists
+    if os.path.exists(DATA_DIR):
+        print(f"[OK] Data directory exists: {DATA_DIR}")
+    else:
+        print(f"[ERROR] Data directory does NOT exist: {DATA_DIR}")
+        return False
+
+    # 2. Check if writable by writing a test file
+    test_file = os.path.join(DATA_DIR, '.write_test')
+    try:
+        with open(test_file, 'w') as f:
+            f.write(f"Volume test: {datetime.now().isoformat()}")
+        os.remove(test_file)
+        print(f"[OK] Directory is writable")
+    except Exception as e:
+        print(f"[ERROR] Directory is NOT writable: {e}")
+        return False
+
+    # 3. Check disk space
+    try:
+        import shutil
+        total, used, free = shutil.disk_usage(DATA_DIR)
+        total_gb = total / (1024**3)
+        used_gb = used / (1024**3)
+        free_gb = free / (1024**3)
+        print(f"[OK] Disk space: {free_gb:.2f} GB free / {total_gb:.2f} GB total ({used_gb:.2f} GB used)")
+    except Exception as e:
+        print(f"[WARN] Could not check disk space: {e}")
+
+    # 4. List existing CSV files and their sizes
+    csv_files = [f for f in os.listdir(DATA_DIR) if f.endswith('.csv')]
+    if csv_files:
+        print(f"[OK] Found {len(csv_files)} existing CSV files:")
+        total_size = 0
+        for csv_file in sorted(csv_files):
+            file_path = os.path.join(DATA_DIR, csv_file)
+            size = os.path.getsize(file_path)
+            total_size += size
+            row_count = sum(1 for _ in open(file_path)) - 1  # -1 for header
+            size_kb = size / 1024
+            print(f"     - {csv_file}: {row_count:,} rows ({size_kb:.1f} KB)")
+        print(f"[OK] Total data stored: {total_size / (1024*1024):.2f} MB")
+    else:
+        print(f"[INFO] No existing CSV files (fresh start)")
+
+    # 5. Check if this is a Railway environment
+    railway_env = os.environ.get('RAILWAY_ENVIRONMENT')
+    if railway_env:
+        print(f"[OK] Running on Railway: {railway_env}")
+    else:
+        print(f"[INFO] Not running on Railway (local environment)")
+
+    print("=" * 70)
+    print("VOLUME CHECK COMPLETE - Storage is working!")
+    print("=" * 70)
+    return True
+
+
+# Run volume check on startup
+verify_volume_storage()
 
 # In-memory buffers for live display (last 100 ticks per crypto)
 live_data = {crypto: deque(maxlen=100) for crypto in CRYPTOS}
@@ -438,6 +505,35 @@ def scrape_crypto(crypto, config):
             time.sleep(5)
 
 
+def get_volume_stats():
+    """Get volume/storage statistics"""
+    try:
+        import shutil
+        total, used, free = shutil.disk_usage(DATA_DIR)
+
+        # Calculate total CSV data size
+        csv_files = [f for f in os.listdir(DATA_DIR) if f.endswith('.csv')]
+        total_csv_size = sum(
+            os.path.getsize(os.path.join(DATA_DIR, f)) for f in csv_files
+        )
+
+        return {
+            'data_dir': DATA_DIR,
+            'total_gb': round(total / (1024**3), 2),
+            'used_gb': round(used / (1024**3), 2),
+            'free_gb': round(free / (1024**3), 2),
+            'csv_count': len(csv_files),
+            'csv_size_mb': round(total_csv_size / (1024**2), 2),
+            'volume_ok': True
+        }
+    except Exception as e:
+        return {
+            'data_dir': DATA_DIR,
+            'error': str(e),
+            'volume_ok': False
+        }
+
+
 def get_stats():
     """Get current scraper stats"""
     with data_lock:
@@ -447,7 +543,8 @@ def get_stats():
             'runtime_seconds': int(runtime),
             'total_ticks': dict(stats['total_ticks']),
             'windows_completed': dict(stats['windows_completed']),
-            'current_markets': dict(current_markets)
+            'current_markets': dict(current_markets),
+            'volume': get_volume_stats()
         }
 
 

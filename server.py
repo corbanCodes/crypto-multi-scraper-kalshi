@@ -167,6 +167,7 @@ MAIN_TEMPLATE = """
     <h1>Multi-Crypto 15-Min Kalshi Scraper</h1>
     <div class="stats" id="global-stats">
         Runtime: <span id="runtime">--</span> |
+        <span id="volume-status" style="color: #4ade80;">Volume: checking...</span> |
         Live updates
     </div>
 
@@ -237,6 +238,17 @@ MAIN_TEMPLATE = """
                 .then(data => {
                     document.getElementById('runtime').textContent =
                         data.runtime_hours + 'h (' + Math.floor(data.runtime_seconds / 60) + 'm)';
+
+                    // Update volume status
+                    const vol = data.volume;
+                    const volEl = document.getElementById('volume-status');
+                    if (vol && vol.volume_ok) {
+                        volEl.style.color = '#4ade80';
+                        volEl.textContent = 'Volume: ' + vol.csv_size_mb + ' MB used | ' + vol.free_gb + ' GB free';
+                    } else {
+                        volEl.style.color = '#f87171';
+                        volEl.textContent = 'Volume: ERROR';
+                    }
 
                     for (const crypto of ['BTC', 'ETH', 'SOL', 'XRP']) {
                         // Update stats
@@ -839,13 +851,20 @@ def run_server():
     app.run(host='0.0.0.0', port=port, threaded=True)
 
 
-# Track if scrapers have been started
+# Track if scrapers have been started (with thread safety)
+import threading
 _scrapers_started = False
+_scrapers_lock = threading.Lock()
 
 def ensure_scrapers_running():
     """Start scrapers if not already running (called on first request)"""
     global _scrapers_started
-    if not _scrapers_started:
+    if _scrapers_started:
+        return
+
+    with _scrapers_lock:
+        if _scrapers_started:
+            return
         print("=" * 70)
         print("MULTI-CRYPTO 15-MINUTE KALSHI SCRAPER + WEB SERVER")
         print("=" * 70)
