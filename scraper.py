@@ -491,7 +491,7 @@ def scrape_crypto(crypto, config):
                 # Log every 30 ticks
                 tick_count = stats['total_ticks'].get(crypto, 0)
                 if tick_count % 30 == 0:
-                    log(f"[{crypto}] Tick #{tick_count} | {secs_left/60:.1f}m | Price: ${price:,.2f if price else 0}")
+                    log(f"[{crypto}] Tick #{tick_count} | {secs_left/60:.1f}m | Price: ${(price or 0):,.2f}")
 
             # Calculate sleep to maintain ~1 second intervals
             elapsed = time.time() - loop_start
