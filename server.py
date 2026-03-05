@@ -216,7 +216,7 @@ MAIN_TEMPLATE = """
     </div>
 
     <div class="footer">
-        Multi-Crypto Kalshi Scraper | Data updates every second
+        Multi-Crypto Kalshi Scraper | Live updates (500ms)
     </div>
 
     <script>

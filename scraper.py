@@ -92,7 +92,7 @@ def api_get(endpoint, params=None):
 
 
 def get_active_market(series_ticker):
-    """Get the currently active market for a series - picks the one expiring soonest"""
+    """Get the currently active market for a series - picks the one expiring soonest that's still open"""
     data = api_get("events", {"series_ticker": series_ticker, "status": "open"})
     if not data or not data.get('events'):
         return None
@@ -101,24 +101,29 @@ def get_active_market(series_ticker):
     if not markets or not markets.get('markets'):
         return None
 
-    # Filter to only open markets and pick the one expiring soonest
-    open_markets = [m for m in markets['markets'] if m.get('status') == 'open']
-    if not open_markets:
-        return None
+    now = datetime.now(timezone.utc)
 
-    # Sort by close_time to get the one expiring soonest
-    def get_close_time(m):
+    # Filter to markets that haven't closed yet and sort by close time
+    def get_secs_left(m):
         close_str = m.get('close_time', '')
         if not close_str:
-            return float('inf')
+            return -9999
         try:
             close = datetime.fromisoformat(close_str.replace('Z', '+00:00'))
-            return close.timestamp()
+            return (close - now).total_seconds()
         except:
-            return float('inf')
+            return -9999
 
-    open_markets.sort(key=get_close_time)
-    return open_markets[0]
+    # Get markets that are still open (close_time in future)
+    active_markets = [(m, get_secs_left(m)) for m in markets['markets']]
+    active_markets = [(m, secs) for m, secs in active_markets if secs > 0]
+
+    if not active_markets:
+        return None
+
+    # Sort by secs_left ascending (soonest first)
+    active_markets.sort(key=lambda x: x[1])
+    return active_markets[0][0]
 
 
 def get_market_details(ticker):
