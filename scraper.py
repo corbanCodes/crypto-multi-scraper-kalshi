@@ -21,6 +21,11 @@ import requests
 # Kalshi API
 KALSHI_API = "https://api.elections.kalshi.com/trade-api/v2"
 
+# Caches to handle API failures gracefully
+_strike_cache = {}      # ticker -> strike price
+_price_cache = {}       # crypto -> last known price
+_price_cache_time = {}  # crypto -> timestamp of last price
+
 # Crypto configurations
 CRYPTOS = {
     'BTC': {
@@ -132,32 +137,54 @@ stats = {
 data_lock = threading.Lock()
 
 
-def get_crypto_price(kraken_pair):
-    """Get crypto price from Kraken"""
-    try:
-        resp = requests.get(
-            "https://api.kraken.com/0/public/Ticker",
-            params={"pair": kraken_pair},
-            timeout=3
-        )
-        resp.raise_for_status()
-        result = resp.json().get('result', {})
-        # Kraken returns weird key names, get first result
-        for key, data in result.items():
-            return float(data['c'][0])
-        return None
-    except Exception as e:
-        return None
+def get_crypto_price(kraken_pair, crypto=None):
+    """Get crypto price from Kraken with caching and retry"""
+    global _price_cache, _price_cache_time
+
+    for attempt in range(3):  # Retry up to 3 times
+        try:
+            resp = requests.get(
+                "https://api.kraken.com/0/public/Ticker",
+                params={"pair": kraken_pair},
+                timeout=5
+            )
+            resp.raise_for_status()
+            result = resp.json().get('result', {})
+            # Kraken returns weird key names, get first result
+            for key, data in result.items():
+                price = float(data['c'][0])
+                # Cache the price
+                if crypto:
+                    _price_cache[crypto] = price
+                    _price_cache_time[crypto] = time.time()
+                return price
+            break
+        except Exception as e:
+            if attempt < 2:
+                time.sleep(0.5)  # Brief wait before retry
+            continue
+
+    # If all retries failed, return cached price if recent (within 60 seconds)
+    if crypto and crypto in _price_cache:
+        age = time.time() - _price_cache_time.get(crypto, 0)
+        if age < 60:
+            return _price_cache[crypto]
+
+    return None
 
 
-def api_get(endpoint, params=None):
-    """Generic Kalshi API call"""
-    try:
-        resp = requests.get(f"{KALSHI_API}/{endpoint}", params=params, timeout=10)
-        resp.raise_for_status()
-        return resp.json()
-    except:
-        return None
+def api_get(endpoint, params=None, retries=3):
+    """Generic Kalshi API call with retry logic"""
+    for attempt in range(retries):
+        try:
+            resp = requests.get(f"{KALSHI_API}/{endpoint}", params=params, timeout=10)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            if attempt < retries - 1:
+                time.sleep(0.5)  # Brief wait before retry
+            continue
+    return None
 
 
 def get_active_market(series_ticker):
@@ -399,6 +426,8 @@ def log(msg):
 
 def scrape_crypto(crypto, config):
     """Scraper thread for a single crypto"""
+    global _strike_cache
+
     series_ticker = config['series_ticker']
     kraken_pair = config['kraken_pair']
     name = config['name']
@@ -407,6 +436,7 @@ def scrape_crypto(crypto, config):
 
     last_ticker = None
     settled_tickers = set()
+    no_market_count = 0  # Track consecutive "no market" to reduce log spam
 
     # Pre-populate settled_tickers with already-settled markets (don't count historical)
     try:
@@ -443,9 +473,15 @@ def scrape_crypto(crypto, config):
             # Get current market
             market = get_active_market(series_ticker)
             if not market:
-                log(f"[{crypto}] No active market found, waiting...")
+                no_market_count += 1
+                # Only log every 10th occurrence to reduce spam
+                if no_market_count == 1 or no_market_count % 10 == 0:
+                    log(f"[{crypto}] No active market found (x{no_market_count}), waiting...")
                 time.sleep(2)
                 continue
+
+            # Reset counter when we find a market
+            no_market_count = 0
 
             ticker = market.get('ticker')
             if not ticker:
@@ -465,33 +501,58 @@ def scrape_crypto(crypto, config):
                 time.sleep(1)
                 continue
 
+            # Get strike price with caching
+            strike = details.get('floor_strike', 0)
+            if strike and strike > 0:
+                # Cache valid strike price
+                _strike_cache[ticker] = strike
+            elif ticker in _strike_cache:
+                # Use cached strike if API returned 0
+                strike = _strike_cache[ticker]
+
             # New window detected
             if ticker != last_ticker:
-                strike = details.get('floor_strike', 0)
-                price = get_crypto_price(kraken_pair)
+                price = get_crypto_price(kraken_pair, crypto)
 
-                log(f"[{crypto}] NEW WINDOW: {ticker} | Strike: ${strike:,.2f} | {secs_left/60:.1f}m left")
-                last_ticker = ticker
+                # Only announce new window if we have valid strike
+                if strike > 0:
+                    log(f"[{crypto}] NEW WINDOW: {ticker} | Strike: ${strike:,.2f} | {secs_left/60:.1f}m left")
+                    last_ticker = ticker
 
-                with data_lock:
-                    current_markets[crypto] = {
-                        'ticker': ticker,
-                        'strike': strike,
-                        'start_time': datetime.now().isoformat()
-                    }
+                    with data_lock:
+                        current_markets[crypto] = {
+                            'ticker': ticker,
+                            'strike': strike,
+                            'start_time': datetime.now().isoformat()
+                        }
+                else:
+                    # Wait for valid strike data before announcing
+                    log(f"[{crypto}] Waiting for strike price for {ticker}...")
+                    time.sleep(1)
+                    continue
 
             # Log tick if window is active
             if secs_left >= 0:
-                strike = details.get('floor_strike', 0)
-                price = get_crypto_price(kraken_pair)
+                price = get_crypto_price(kraken_pair, crypto)
                 orderbook = get_orderbook(ticker)
+
+                # Validate data before logging - skip if critical data is missing
+                if strike == 0:
+                    log(f"[{crypto}] Skipping tick - no strike price for {ticker}")
+                    time.sleep(1)
+                    continue
+
+                if price is None or price == 0:
+                    log(f"[{crypto}] Skipping tick - no crypto price")
+                    time.sleep(1)
+                    continue
 
                 log_tick(crypto, ticker, strike, price, secs_left, details, orderbook)
 
                 # Log every 30 ticks
                 tick_count = stats['total_ticks'].get(crypto, 0)
                 if tick_count % 30 == 0:
-                    log(f"[{crypto}] Tick #{tick_count} | {secs_left/60:.1f}m | Price: ${(price or 0):,.2f}")
+                    log(f"[{crypto}] Tick #{tick_count} | {secs_left/60:.1f}m | Price: ${price:,.2f}")
 
             # Calculate sleep to maintain ~1 second intervals
             elapsed = time.time() - loop_start
