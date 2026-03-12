@@ -337,10 +337,12 @@ def log_tick(crypto, ticker, strike, crypto_price, secs_left, market, orderbook)
     now = datetime.now(timezone.utc)
     mins_left = secs_left / 60 if secs_left else 0
 
-    yes_ask = market.get('yes_ask', 0)
-    no_ask = market.get('no_ask', 0)
-    yes_bid = market.get('yes_bid', 0)
-    no_bid = market.get('no_bid', 0)
+    # Kalshi API now returns prices in dollars with _dollars suffix
+    # Convert to cents (multiply by 100) for consistency with existing data
+    yes_ask = int(float(market.get('yes_ask_dollars', 0)) * 100)
+    no_ask = int(float(market.get('no_ask_dollars', 0)) * 100)
+    yes_bid = int(float(market.get('yes_bid_dollars', 0)) * 100)
+    no_bid = int(float(market.get('no_bid_dollars', 0)) * 100)
     spread = abs(yes_ask - (100 - no_ask))
 
     row = [
