@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker volume ls:*)",
+      "Bash(railway --version:*)"
+    ]
+  }
+}
